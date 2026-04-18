@@ -1,90 +1,32 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
-import { saveDocument, getDocument, type Document } from "@/lib/indexeddb";
+import { useEffect, useRef } from "react";
+import { useYjsDocument } from "@/hooks/use-yjs-document";
 import { Save, FileText, Check, Loader2 } from "lucide-react";
 
 const DOCUMENT_ID = "main-document";
-const AUTO_SAVE_DELAY = 1000;
 
 export function DocumentEditor() {
-  const [title, setTitle] = useState("Untitled Document");
-  const [content, setContent] = useState("");
-  const [isLoading, setIsLoading] = useState(true);
-  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
-  const [lastSaved, setLastSaved] = useState<Date | null>(null);
-  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const {
+    title,
+    content,
+    isLoading,
+    saveStatus,
+    lastSaved,
+    updateTitle,
+    updateContent,
+    manualSave,
+  } = useYjsDocument({ documentId: DOCUMENT_ID });
+
   const contentRef = useRef<HTMLTextAreaElement>(null);
 
-  // Load document on mount
-  useEffect(() => {
-    async function loadDocument() {
-      try {
-        const doc = await getDocument(DOCUMENT_ID);
-        if (doc) {
-          setTitle(doc.title);
-          setContent(doc.content);
-          setLastSaved(new Date(doc.updatedAt));
-        }
-      } catch (error) {
-        console.error("[v0] Failed to load document:", error);
-      } finally {
-        setIsLoading(false);
-      }
-    }
-    loadDocument();
-  }, []);
-
-  // Auto-save function
-  const save = useCallback(async (newTitle: string, newContent: string) => {
-    setSaveStatus("saving");
-    try {
-      const doc: Document = {
-        id: DOCUMENT_ID,
-        title: newTitle,
-        content: newContent,
-        updatedAt: Date.now(),
-      };
-      await saveDocument(doc);
-      setLastSaved(new Date());
-      setSaveStatus("saved");
-      setTimeout(() => setSaveStatus("idle"), 2000);
-    } catch (error) {
-      console.error("[v0] Failed to save document:", error);
-      setSaveStatus("idle");
-    }
-  }, []);
-
-  // Debounced auto-save
-  const debouncedSave = useCallback(
-    (newTitle: string, newContent: string) => {
-      if (saveTimeoutRef.current) {
-        clearTimeout(saveTimeoutRef.current);
-      }
-      saveTimeoutRef.current = setTimeout(() => {
-        save(newTitle, newContent);
-      }, AUTO_SAVE_DELAY);
-    },
-    [save]
-  );
-
   const handleTitleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newTitle = e.target.value;
-    setTitle(newTitle);
-    debouncedSave(newTitle, content);
+    updateTitle(e.target.value);
   };
 
   const handleContentChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const newContent = e.target.value;
-    setContent(newContent);
-    debouncedSave(title, newContent);
-  };
-
-  const handleManualSave = () => {
-    if (saveTimeoutRef.current) {
-      clearTimeout(saveTimeoutRef.current);
-    }
-    save(title, content);
+    const cursorPosition = e.target.selectionStart;
+    updateContent(e.target.value, cursorPosition);
   };
 
   // Handle keyboard shortcut for save
@@ -92,12 +34,12 @@ export function DocumentEditor() {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "s") {
         e.preventDefault();
-        handleManualSave();
+        manualSave();
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [title, content]);
+  }, [manualSave]);
 
   if (isLoading) {
     return (
@@ -123,6 +65,11 @@ export function DocumentEditor() {
             />
           </div>
           <div className="flex items-center gap-3 shrink-0">
+            {/* CRDT indicator */}
+            <div className="hidden sm:flex items-center gap-1.5 px-2 py-1 bg-muted rounded text-xs text-muted-foreground">
+              <span className="w-2 h-2 rounded-full bg-green-500" />
+              <span>CRDT</span>
+            </div>
             {/* Save status indicator */}
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               {saveStatus === "saving" && (
@@ -145,7 +92,7 @@ export function DocumentEditor() {
             </div>
             {/* Manual save button */}
             <button
-              onClick={handleManualSave}
+              onClick={manualSave}
               className="flex items-center gap-2 px-3 py-1.5 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 transition-colors"
             >
               <Save className="h-4 w-4" />

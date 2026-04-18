@@ -1,11 +1,12 @@
 const DB_NAME = "documents-db";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_NAME = "documents";
 
 export interface Document {
   id: string;
   title: string;
-  content: string;
+  // Yjs state is stored as Uint8Array
+  yjsState: Uint8Array;
   updatedAt: number;
 }
 

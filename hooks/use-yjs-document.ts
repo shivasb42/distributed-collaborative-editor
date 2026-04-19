@@ -2,31 +2,58 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import * as Y from "yjs";
-import { saveDocument, getDocument, type Document } from "@/lib/indexeddb";
+import {
+  saveDocument,
+  getDocument,
+  getCurrentDocumentId,
+  addUnsyncedUpdate,
+  getUnsyncedUpdates,
+  clearUnsyncedUpdates,
+  getUnsyncedCount,
+  type Document,
+} from "@/lib/indexeddb";
 
 const AUTO_SAVE_DELAY = 1000;
 
-interface UseYjsDocumentOptions {
-  documentId: string;
-}
-
-export function useYjsDocument({ documentId }: UseYjsDocumentOptions) {
+export function useYjsDocument() {
   const ydocRef = useRef<Y.Doc | null>(null);
   const yTitleRef = useRef<Y.Text | null>(null);
   const yContentRef = useRef<Y.Text | null>(null);
 
+  const [documentId, setDocumentId] = useState<string | null>(null);
   const [title, setTitle] = useState("Untitled Document");
   const [content, setContent] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
+  const [unsyncedCount, setUnsyncedCount] = useState(0);
+  const [isOnline, setIsOnline] = useState(true);
 
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isInitializedRef = useRef(false);
 
+  // Track online/offline status
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+
+    setIsOnline(navigator.onLine);
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
+
   // Initialize Y.Doc and load from IndexedDB
   useEffect(() => {
     async function initDocument() {
+      // Get or create document ID
+      const docId = await getCurrentDocumentId();
+      setDocumentId(docId);
+
       // Create new Y.Doc
       const ydoc = new Y.Doc();
       ydocRef.current = ydoc;
@@ -39,14 +66,41 @@ export function useYjsDocument({ documentId }: UseYjsDocumentOptions) {
 
       // Try to load existing document from IndexedDB
       try {
-        const savedDoc = await getDocument(documentId);
+        const savedDoc = await getDocument(docId);
         if (savedDoc && savedDoc.yjsState) {
           // Apply saved Yjs state
           Y.applyUpdate(ydoc, savedDoc.yjsState);
           setLastSaved(new Date(savedDoc.updatedAt));
+
+          // Check for and apply any unsynced updates (crash recovery)
+          const unsyncedUpdates = await getUnsyncedUpdates(docId);
+          if (unsyncedUpdates.length > 0) {
+            for (const update of unsyncedUpdates) {
+              Y.applyUpdate(ydoc, update.update);
+            }
+            // Save the merged state and clear unsynced updates
+            const mergedState = Y.encodeStateAsUpdate(ydoc);
+            await saveDocument({
+              id: docId,
+              title: yTitle.toString(),
+              yjsState: mergedState,
+              updatedAt: Date.now(),
+              createdAt: savedDoc.createdAt,
+            });
+            await clearUnsyncedUpdates(docId);
+          }
         } else {
-          // Initialize with default title
+          // Initialize with default title for new document
           yTitle.insert(0, "Untitled Document");
+          // Save initial state
+          const initialState = Y.encodeStateAsUpdate(ydoc);
+          await saveDocument({
+            id: docId,
+            title: "Untitled Document",
+            yjsState: initialState,
+            updatedAt: Date.now(),
+            createdAt: Date.now(),
+          });
         }
       } catch (error) {
         console.error("Failed to load document:", error);
@@ -59,6 +113,10 @@ export function useYjsDocument({ documentId }: UseYjsDocumentOptions) {
       isInitializedRef.current = true;
       setIsLoading(false);
 
+      // Update unsynced count
+      const count = await getUnsyncedCount(docId);
+      setUnsyncedCount(count);
+
       // Subscribe to Y.Doc changes
       yTitle.observe(() => {
         setTitle(yTitle.toString());
@@ -66,6 +124,20 @@ export function useYjsDocument({ documentId }: UseYjsDocumentOptions) {
 
       yContent.observe(() => {
         setContent(yContent.toString());
+      });
+
+      // Listen for updates to track unsynced changes
+      ydoc.on("update", async (update: Uint8Array, origin: unknown) => {
+        // Only track updates that originated locally (not from loading)
+        if (origin !== "load" && isInitializedRef.current) {
+          try {
+            await addUnsyncedUpdate(docId, update);
+            const count = await getUnsyncedCount(docId);
+            setUnsyncedCount(count);
+          } catch (error) {
+            console.error("Failed to track unsynced update:", error);
+          }
+        }
       });
     }
 
@@ -79,22 +151,27 @@ export function useYjsDocument({ documentId }: UseYjsDocumentOptions) {
         clearTimeout(saveTimeoutRef.current);
       }
     };
-  }, [documentId]);
+  }, []);
 
   // Save function - persists Yjs state to IndexedDB
   const save = useCallback(async () => {
-    if (!ydocRef.current || !yTitleRef.current) return;
+    if (!ydocRef.current || !yTitleRef.current || !documentId) return;
 
     setSaveStatus("saving");
     try {
       const state = Y.encodeStateAsUpdate(ydocRef.current);
+      const existingDoc = await getDocument(documentId);
       const doc: Document = {
         id: documentId,
         title: yTitleRef.current.toString(),
         yjsState: state,
         updatedAt: Date.now(),
+        createdAt: existingDoc?.createdAt || Date.now(),
       };
       await saveDocument(doc);
+      // Clear unsynced updates after successful save
+      await clearUnsyncedUpdates(documentId);
+      setUnsyncedCount(0);
       setLastSaved(new Date());
       setSaveStatus("saved");
       setTimeout(() => setSaveStatus("idle"), 2000);
@@ -182,12 +259,76 @@ export function useYjsDocument({ documentId }: UseYjsDocumentOptions) {
   // Get the Y.Doc for external use (e.g., syncing)
   const getYDoc = useCallback(() => ydocRef.current, []);
 
+  // Save before page unload
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (ydocRef.current && documentId) {
+        // Synchronous save attempt - may not complete
+        const state = Y.encodeStateAsUpdate(ydocRef.current);
+        const title = yTitleRef.current?.toString() || "Untitled Document";
+        
+        // Use sendBeacon for reliable delivery on unload
+        const data = JSON.stringify({
+          id: documentId,
+          title,
+          yjsState: Array.from(state),
+          updatedAt: Date.now(),
+        });
+        
+        // Store in sessionStorage as backup
+        try {
+          sessionStorage.setItem(`backup-${documentId}`, data);
+        } catch {
+          // Ignore storage errors
+        }
+      }
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [documentId]);
+
+  // Recover from sessionStorage backup on mount
+  useEffect(() => {
+    if (!documentId || isLoading) return;
+
+    const recoverFromBackup = async () => {
+      try {
+        const backup = sessionStorage.getItem(`backup-${documentId}`);
+        if (backup) {
+          const data = JSON.parse(backup);
+          const backupTime = data.updatedAt;
+          const currentDoc = await getDocument(documentId);
+
+          // Only apply backup if it's newer than saved doc
+          if (!currentDoc || backupTime > currentDoc.updatedAt) {
+            const yjsState = new Uint8Array(data.yjsState);
+            if (ydocRef.current) {
+              Y.applyUpdate(ydocRef.current, yjsState);
+              await save();
+            }
+          }
+
+          // Clear backup after processing
+          sessionStorage.removeItem(`backup-${documentId}`);
+        }
+      } catch {
+        // Ignore recovery errors
+      }
+    };
+
+    recoverFromBackup();
+  }, [documentId, isLoading, save]);
+
   return {
+    documentId,
     title,
     content,
     isLoading,
     saveStatus,
     lastSaved,
+    unsyncedCount,
+    isOnline,
     updateTitle,
     updateContent,
     manualSave,

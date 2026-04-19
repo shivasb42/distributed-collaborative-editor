@@ -24,9 +24,9 @@ type SyncMessage =
   | { type: "client-left"; clientCount: number }
   | { type: "error"; message: string };
 
-const wss = new WebSocketServer({ port: PORT });
+const wss = new WebSocketServer({ port: PORT, host: "0.0.0.0" });
 
-console.log(`WebSocket sync server running on ws://localhost:${PORT}`);
+console.log(`WebSocket sync server running on ws://0.0.0.0:${PORT} (accessible from any device on your network)`);
 
 wss.on("connection", (ws: WebSocket) => {
   let currentDocumentId: string | null = null;

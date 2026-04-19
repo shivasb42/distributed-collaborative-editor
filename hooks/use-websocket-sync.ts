@@ -22,10 +22,17 @@ interface SyncMessage {
   message?: string;
 }
 
+// Auto-detect WebSocket URL based on current page hostname
+function getDefaultWsUrl() {
+  if (typeof window === "undefined") return "ws://localhost:1234";
+  const hostname = window.location.hostname;
+  return `ws://${hostname}:1234`;
+}
+
 export function useWebSocketSync({
   ydoc,
   documentId,
-  serverUrl = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:1234",
+  serverUrl = process.env.NEXT_PUBLIC_WS_URL || getDefaultWsUrl(),
   enabled = true,
 }: UseWebSocketSyncOptions) {
   const wsRef = useRef<WebSocket | null>(null);

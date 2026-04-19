@@ -69,10 +69,12 @@ export function useWebSocketSync({
       wsRef.current = ws;
 
       ws.onopen = () => {
+        console.log("[v0] WebSocket connected to", serverUrl);
         setStatus("connected");
         reconnectAttemptsRef.current = 0;
         
         // Join the document room
+        console.log("[v0] Joining document room:", documentId);
         sendMessage({ type: "join", documentId });
         
         // Send our current state for sync
@@ -87,15 +89,18 @@ export function useWebSocketSync({
       ws.onmessage = (event) => {
         try {
           const message: SyncMessage = JSON.parse(event.data);
+          console.log("[v0] WebSocket received:", message.type);
 
           switch (message.type) {
             case "update":
+              console.log("[v0] Received remote update, applying...");
               if (message.update) {
                 handleRemoteUpdate(new Uint8Array(message.update));
               }
               break;
 
             case "sync-response":
+              console.log("[v0] Received sync response, applying state...");
               if (message.state) {
                 handleRemoteUpdate(new Uint8Array(message.state));
               }
@@ -103,15 +108,17 @@ export function useWebSocketSync({
 
             case "client-joined":
             case "client-left":
+              console.log("[v0] Client count:", message.clientCount);
               setConnectedClients(message.clientCount || 0);
               break;
 
             case "error":
+              console.log("[v0] WebSocket error:", message.message);
               setError(message.message || "Unknown error");
               break;
           }
         } catch (err) {
-          console.error("Failed to parse WebSocket message:", err);
+          console.error("[v0] Failed to parse WebSocket message:", err);
         }
       };
 
@@ -128,7 +135,8 @@ export function useWebSocketSync({
         }
       };
 
-      ws.onerror = () => {
+      ws.onerror = (e) => {
+        console.log("[v0] WebSocket error:", e);
         setStatus("error");
         setError("Connection failed");
       };

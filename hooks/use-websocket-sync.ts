@@ -1,0 +1,186 @@
+"use client";
+
+import { useEffect, useRef, useState, useCallback } from "react";
+import * as Y from "yjs";
+
+type SyncStatus = "disconnected" | "connecting" | "connected" | "error";
+
+interface UseWebSocketSyncOptions {
+  ydoc: Y.Doc | null;
+  documentId: string | null;
+  serverUrl?: string;
+  enabled?: boolean;
+}
+
+interface SyncMessage {
+  type: string;
+  documentId?: string;
+  update?: number[];
+  state?: number[];
+  stateVector?: number[];
+  clientCount?: number;
+  message?: string;
+}
+
+export function useWebSocketSync({
+  ydoc,
+  documentId,
+  serverUrl = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:1234",
+  enabled = true,
+}: UseWebSocketSyncOptions) {
+  const wsRef = useRef<WebSocket | null>(null);
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const reconnectAttemptsRef = useRef(0);
+  
+  const [status, setStatus] = useState<SyncStatus>("disconnected");
+  const [connectedClients, setConnectedClients] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+
+  // Send message helper
+  const sendMessage = useCallback((message: SyncMessage) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify(message));
+    }
+  }, []);
+
+  // Handle incoming Yjs update
+  const handleRemoteUpdate = useCallback((update: Uint8Array) => {
+    if (ydoc) {
+      Y.applyUpdate(ydoc, update, "websocket");
+    }
+  }, [ydoc]);
+
+  // Connect to WebSocket server
+  const connect = useCallback(() => {
+    if (!enabled || !documentId || !ydoc || wsRef.current) return;
+
+    setStatus("connecting");
+    setError(null);
+
+    try {
+      const ws = new WebSocket(serverUrl);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        setStatus("connected");
+        reconnectAttemptsRef.current = 0;
+        
+        // Join the document room
+        sendMessage({ type: "join", documentId });
+        
+        // Send our current state for sync
+        const stateVector = Y.encodeStateVector(ydoc);
+        sendMessage({
+          type: "sync-request",
+          documentId,
+          stateVector: Array.from(stateVector),
+        });
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const message: SyncMessage = JSON.parse(event.data);
+
+          switch (message.type) {
+            case "update":
+              if (message.update) {
+                handleRemoteUpdate(new Uint8Array(message.update));
+              }
+              break;
+
+            case "sync-response":
+              if (message.state) {
+                handleRemoteUpdate(new Uint8Array(message.state));
+              }
+              break;
+
+            case "client-joined":
+            case "client-left":
+              setConnectedClients(message.clientCount || 0);
+              break;
+
+            case "error":
+              setError(message.message || "Unknown error");
+              break;
+          }
+        } catch (err) {
+          console.error("Failed to parse WebSocket message:", err);
+        }
+      };
+
+      ws.onclose = () => {
+        wsRef.current = null;
+        setStatus("disconnected");
+        setConnectedClients(0);
+
+        // Reconnect with exponential backoff
+        if (enabled && reconnectAttemptsRef.current < 5) {
+          const delay = Math.min(1000 * Math.pow(2, reconnectAttemptsRef.current), 30000);
+          reconnectAttemptsRef.current++;
+          reconnectTimeoutRef.current = setTimeout(connect, delay);
+        }
+      };
+
+      ws.onerror = () => {
+        setStatus("error");
+        setError("Connection failed");
+      };
+    } catch (err) {
+      setStatus("error");
+      setError(err instanceof Error ? err.message : "Connection failed");
+    }
+  }, [enabled, documentId, ydoc, serverUrl, sendMessage, handleRemoteUpdate]);
+
+  // Disconnect from WebSocket server
+  const disconnect = useCallback(() => {
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
+    }
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+    setStatus("disconnected");
+    setConnectedClients(0);
+  }, []);
+
+  // Send local updates to server
+  useEffect(() => {
+    if (!ydoc || !documentId || status !== "connected") return;
+
+    const handleUpdate = (update: Uint8Array, origin: unknown) => {
+      // Don't send back updates that came from the server
+      if (origin === "websocket" || origin === "load") return;
+      
+      sendMessage({
+        type: "update",
+        documentId,
+        update: Array.from(update),
+      });
+    };
+
+    ydoc.on("update", handleUpdate);
+    return () => {
+      ydoc.off("update", handleUpdate);
+    };
+  }, [ydoc, documentId, status, sendMessage]);
+
+  // Connect when enabled and we have required data
+  useEffect(() => {
+    if (enabled && documentId && ydoc) {
+      connect();
+    }
+    return () => {
+      disconnect();
+    };
+  }, [enabled, documentId, ydoc, connect, disconnect]);
+
+  return {
+    status,
+    connectedClients,
+    error,
+    reconnect: connect,
+    disconnect,
+  };
+}

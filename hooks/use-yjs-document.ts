@@ -34,17 +34,6 @@ export function useYjsDocument() {
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isInitializedRef = useRef(false);
 
-  // Tab sync for real-time collaboration between browser tabs
-  const {
-    isActive: isTabSyncActive,
-    connectedTabs,
-    tabId,
-  } = useTabSync({
-    ydoc: isDocReady ? ydocRef.current : null,
-    documentId,
-    enabled: true,
-  });
-
   // Track online/offline status
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
@@ -60,38 +49,55 @@ export function useYjsDocument() {
     };
   }, []);
 
+  // Tab sync for real-time collaboration between browser tabs
+  const {
+    isActive: isTabSyncActive,
+    connectedTabs,
+    tabId,
+    syncStatus,
+    requestReconciliation,
+    flushOfflineQueue,
+  } = useTabSync({
+    ydoc: isDocReady ? ydocRef.current : null,
+    documentId,
+    enabled: true,
+    isOffline: !isOnline,
+  });
+
+  // Trigger reconciliation when coming back online
+  useEffect(() => {
+    if (isOnline && syncStatus.state === "reconnecting") {
+      requestReconciliation();
+      flushOfflineQueue();
+    }
+  }, [isOnline, syncStatus.state, requestReconciliation, flushOfflineQueue]);
+
   // Initialize Y.Doc and load from IndexedDB
   useEffect(() => {
     async function initDocument() {
-      // Get or create document ID
       const docId = await getCurrentDocumentId();
       setDocumentId(docId);
 
-      // Create new Y.Doc
       const ydoc = new Y.Doc();
       ydocRef.current = ydoc;
 
-      // Get shared text types
       const yTitle = ydoc.getText("title");
       const yContent = ydoc.getText("content");
       yTitleRef.current = yTitle;
       yContentRef.current = yContent;
 
-      // Try to load existing document from IndexedDB
       try {
         const savedDoc = await getDocument(docId);
         if (savedDoc && savedDoc.yjsState) {
-          // Apply saved Yjs state
-          Y.applyUpdate(ydoc, savedDoc.yjsState);
+          Y.applyUpdate(ydoc, savedDoc.yjsState, "load");
           setLastSaved(new Date(savedDoc.updatedAt));
 
-          // Check for and apply any unsynced updates (crash recovery)
+          // Crash recovery: apply unsynced updates
           const unsyncedUpdates = await getUnsyncedUpdates(docId);
           if (unsyncedUpdates.length > 0) {
             for (const update of unsyncedUpdates) {
-              Y.applyUpdate(ydoc, update.update);
+              Y.applyUpdate(ydoc, update.update, "load");
             }
-            // Save the merged state and clear unsynced updates
             const mergedState = Y.encodeStateAsUpdate(ydoc);
             await saveDocument({
               id: docId,
@@ -103,9 +109,7 @@ export function useYjsDocument() {
             await clearUnsyncedUpdates(docId);
           }
         } else {
-          // Initialize with default title for new document
           yTitle.insert(0, "Untitled Document");
-          // Save initial state
           const initialState = Y.encodeStateAsUpdate(ydoc);
           await saveDocument({
             id: docId,
@@ -120,18 +124,16 @@ export function useYjsDocument() {
         yTitle.insert(0, "Untitled Document");
       }
 
-      // Set initial state from Y.Doc
       setTitle(yTitle.toString());
       setContent(yContent.toString());
       isInitializedRef.current = true;
       setIsLoading(false);
       setIsDocReady(true);
 
-      // Update unsynced count
       const count = await getUnsyncedCount(docId);
       setUnsyncedCount(count);
 
-      // Subscribe to Y.Doc changes (from local AND remote)
+      // Subscribe to changes
       yTitle.observe(() => {
         setTitle(yTitle.toString());
       });
@@ -140,9 +142,8 @@ export function useYjsDocument() {
         setContent(yContent.toString());
       });
 
-      // Listen for updates to track unsynced changes (for persistence)
+      // Track updates for persistence
       ydoc.on("update", async (update: Uint8Array, origin: unknown) => {
-        // Track local updates only (not from tab-sync or initial load)
         if (origin !== "load" && origin !== "tab-sync" && isInitializedRef.current) {
           try {
             await addUnsyncedUpdate(docId, update);
@@ -167,7 +168,7 @@ export function useYjsDocument() {
     };
   }, []);
 
-  // Save function - persists Yjs state to IndexedDB
+  // Save to IndexedDB
   const save = useCallback(async () => {
     if (!ydocRef.current || !yTitleRef.current || !documentId) return;
 
@@ -183,7 +184,6 @@ export function useYjsDocument() {
         createdAt: existingDoc?.createdAt || Date.now(),
       };
       await saveDocument(doc);
-      // Clear unsynced updates after successful save
       await clearUnsyncedUpdates(documentId);
       setUnsyncedCount(0);
       setLastSaved(new Date());
@@ -205,7 +205,7 @@ export function useYjsDocument() {
     }, AUTO_SAVE_DELAY);
   }, [save]);
 
-  // Update title in CRDT
+  // Update title
   const updateTitle = useCallback(
     (newTitle: string) => {
       if (!yTitleRef.current || !isInitializedRef.current) return;
@@ -220,7 +220,7 @@ export function useYjsDocument() {
     [scheduleSave]
   );
 
-  // Update content in CRDT - handles cursor-aware text edits
+  // Update content with cursor-aware edits
   const updateContent = useCallback(
     (newContent: string, cursorPosition?: number) => {
       if (!yContentRef.current || !isInitializedRef.current) return;
@@ -228,12 +228,10 @@ export function useYjsDocument() {
       const yContent = yContentRef.current;
       const currentContent = yContent.toString();
 
-      // Simple diff for single-character operations (optimized for typing)
       if (cursorPosition !== undefined) {
         const lengthDiff = newContent.length - currentContent.length;
 
         if (lengthDiff === 1) {
-          // Single character insertion
           const insertPos = cursorPosition - 1;
           const insertedChar = newContent[insertPos];
           if (insertedChar !== undefined) {
@@ -242,7 +240,6 @@ export function useYjsDocument() {
             return;
           }
         } else if (lengthDiff === -1) {
-          // Single character deletion (backspace)
           const deletePos = cursorPosition;
           if (deletePos >= 0 && deletePos < currentContent.length) {
             yContent.delete(deletePos, 1);
@@ -252,7 +249,6 @@ export function useYjsDocument() {
         }
       }
 
-      // Fallback: replace all content (for paste, cut, etc.)
       ydocRef.current?.transact(() => {
         yContent.delete(0, yContent.length);
         yContent.insert(0, newContent);
@@ -270,8 +266,26 @@ export function useYjsDocument() {
     save();
   }, [save]);
 
-  // Get the Y.Doc for external use (e.g., syncing)
+  // Get Y.Doc
   const getYDoc = useCallback(() => ydocRef.current, []);
+
+  // Get state vector for sync
+  const getStateVector = useCallback(() => {
+    if (!ydocRef.current) return null;
+    return Y.encodeStateVector(ydocRef.current);
+  }, []);
+
+  // Apply remote update
+  const applyRemoteUpdate = useCallback((update: Uint8Array) => {
+    if (!ydocRef.current) return;
+    Y.applyUpdate(ydocRef.current, update, "remote");
+  }, []);
+
+  // Get updates since a state vector
+  const getUpdatesSince = useCallback((stateVector: Uint8Array) => {
+    if (!ydocRef.current) return null;
+    return Y.encodeStateAsUpdate(ydocRef.current, stateVector);
+  }, []);
 
   // Save before page unload
   useEffect(() => {
@@ -279,18 +293,18 @@ export function useYjsDocument() {
       if (ydocRef.current && documentId) {
         const state = Y.encodeStateAsUpdate(ydocRef.current);
         const title = yTitleRef.current?.toString() || "Untitled Document";
-        
+
         const data = JSON.stringify({
           id: documentId,
           title,
           yjsState: Array.from(state),
           updatedAt: Date.now(),
         });
-        
+
         try {
           sessionStorage.setItem(`backup-${documentId}`, data);
         } catch {
-          // Ignore storage errors
+          // Ignore
         }
       }
     };
@@ -299,7 +313,7 @@ export function useYjsDocument() {
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [documentId]);
 
-  // Recover from sessionStorage backup on mount
+  // Recover from sessionStorage
   useEffect(() => {
     if (!documentId || isLoading) return;
 
@@ -314,7 +328,7 @@ export function useYjsDocument() {
           if (!currentDoc || backupTime > currentDoc.updatedAt) {
             const yjsState = new Uint8Array(data.yjsState);
             if (ydocRef.current) {
-              Y.applyUpdate(ydocRef.current, yjsState);
+              Y.applyUpdate(ydocRef.current, yjsState, "recovery");
               await save();
             }
           }
@@ -322,7 +336,7 @@ export function useYjsDocument() {
           sessionStorage.removeItem(`backup-${documentId}`);
         }
       } catch {
-        // Ignore recovery errors
+        // Ignore
       }
     };
 
@@ -342,9 +356,16 @@ export function useYjsDocument() {
     updateContent,
     manualSave,
     getYDoc,
+    // Sync utilities
+    getStateVector,
+    applyRemoteUpdate,
+    getUpdatesSince,
     // Tab sync status
     isTabSyncActive,
     connectedTabs,
     tabId,
+    syncStatus,
+    requestReconciliation,
+    flushOfflineQueue,
   };
 }

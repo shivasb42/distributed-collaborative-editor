@@ -12,7 +12,7 @@ import {
   getUnsyncedCount,
   type Document,
 } from "@/lib/indexeddb";
-import { useSyncProvider } from "./use-sync-provider";
+import { useTabSync } from "./use-tab-sync";
 
 const AUTO_SAVE_DELAY = 1000;
 
@@ -29,21 +29,20 @@ export function useYjsDocument() {
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
   const [unsyncedCount, setUnsyncedCount] = useState(0);
   const [isOnline, setIsOnline] = useState(true);
+  const [isDocReady, setIsDocReady] = useState(false);
 
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isInitializedRef = useRef(false);
 
-  // Sync provider for real-time collaboration
+  // Tab sync for real-time collaboration between browser tabs
   const {
-    status: syncStatus,
-    connectedClients,
-    error: syncError,
-    isConnected,
-  } = useSyncProvider({
-    ydoc: ydocRef.current,
+    isActive: isTabSyncActive,
+    connectedTabs,
+    tabId,
+  } = useTabSync({
+    ydoc: isDocReady ? ydocRef.current : null,
     documentId,
-    serverUrl: process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:1234",
-    autoConnect: true,
+    enabled: true,
   });
 
   // Track online/offline status
@@ -126,6 +125,7 @@ export function useYjsDocument() {
       setContent(yContent.toString());
       isInitializedRef.current = true;
       setIsLoading(false);
+      setIsDocReady(true);
 
       // Update unsynced count
       const count = await getUnsyncedCount(docId);
@@ -142,8 +142,8 @@ export function useYjsDocument() {
 
       // Listen for updates to track unsynced changes (for persistence)
       ydoc.on("update", async (update: Uint8Array, origin: unknown) => {
-        // Track all updates except those from initial load
-        if (origin !== "load" && origin !== "remote" && isInitializedRef.current) {
+        // Track local updates only (not from tab-sync or initial load)
+        if (origin !== "load" && origin !== "tab-sync" && isInitializedRef.current) {
           try {
             await addUnsyncedUpdate(docId, update);
             const count = await getUnsyncedCount(docId);
@@ -342,10 +342,9 @@ export function useYjsDocument() {
     updateContent,
     manualSave,
     getYDoc,
-    // Sync status
-    syncStatus,
-    connectedClients,
-    syncError,
-    isConnected,
+    // Tab sync status
+    isTabSyncActive,
+    connectedTabs,
+    tabId,
   };
 }

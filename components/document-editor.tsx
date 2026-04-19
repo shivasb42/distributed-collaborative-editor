@@ -10,7 +10,7 @@ import {
   Wifi,
   WifiOff,
   CloudOff,
-  Users,
+  Monitor,
   Circle,
 } from "lucide-react";
 
@@ -27,10 +27,10 @@ export function DocumentEditor() {
     updateTitle,
     updateContent,
     manualSave,
-    // Sync status
-    syncStatus,
-    connectedClients,
-    isConnected,
+    // Tab sync status
+    isTabSyncActive,
+    connectedTabs,
+    tabId,
   } = useYjsDocument();
 
   const contentRef = useRef<HTMLTextAreaElement>(null);
@@ -64,32 +64,6 @@ export function DocumentEditor() {
     );
   }
 
-  const getSyncStatusColor = () => {
-    switch (syncStatus) {
-      case "connected":
-        return "bg-green-500";
-      case "connecting":
-        return "bg-amber-500 animate-pulse";
-      case "error":
-        return "bg-red-500";
-      default:
-        return "bg-muted-foreground";
-    }
-  };
-
-  const getSyncStatusText = () => {
-    switch (syncStatus) {
-      case "connected":
-        return "Synced";
-      case "connecting":
-        return "Connecting...";
-      case "error":
-        return "Sync error";
-      default:
-        return "Disconnected";
-    }
-  };
-
   return (
     <div className="min-h-screen bg-background flex flex-col">
       {/* Header */}
@@ -106,31 +80,31 @@ export function DocumentEditor() {
             />
           </div>
           <div className="flex items-center gap-3 shrink-0">
-            {/* Connected clients indicator */}
-            {isConnected && connectedClients > 0 && (
-              <div className="hidden sm:flex items-center gap-1.5 px-2 py-1 bg-muted rounded text-xs text-muted-foreground">
-                <Users className="h-3 w-3" />
+            {/* Connected tabs indicator */}
+            {isTabSyncActive && (
+              <div
+                className={`hidden sm:flex items-center gap-1.5 px-2 py-1 rounded text-xs ${
+                  connectedTabs > 0
+                    ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
+                    : "bg-muted text-muted-foreground"
+                }`}
+              >
+                <Monitor className="h-3 w-3" />
                 <span>
-                  {connectedClients} {connectedClients === 1 ? "user" : "users"}
+                  {connectedTabs > 0
+                    ? `${connectedTabs + 1} tabs synced`
+                    : "1 tab"}
                 </span>
               </div>
             )}
 
-            {/* Sync status indicator */}
-            <div
-              className={`hidden sm:flex items-center gap-1.5 px-2 py-1 rounded text-xs ${
-                syncStatus === "connected"
-                  ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
-                  : syncStatus === "connecting"
-                  ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
-                  : syncStatus === "error"
-                  ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
-                  : "bg-muted text-muted-foreground"
-              }`}
-            >
-              <Circle className={`h-2 w-2 ${getSyncStatusColor()}`} />
-              <span>{getSyncStatusText()}</span>
-            </div>
+            {/* Real-time sync indicator */}
+            {isTabSyncActive && connectedTabs > 0 && (
+              <div className="hidden sm:flex items-center gap-1.5 px-2 py-1 bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 rounded text-xs">
+                <Circle className="h-2 w-2 bg-green-500 rounded-full animate-pulse" />
+                <span>Live</span>
+              </div>
+            )}
 
             {/* Online/Offline indicator */}
             <div
@@ -200,6 +174,19 @@ export function DocumentEditor() {
         </div>
       </header>
 
+      {/* Sync Banner */}
+      {isTabSyncActive && connectedTabs > 0 && (
+        <div className="bg-green-50 dark:bg-green-900/20 border-b border-green-200 dark:border-green-800">
+          <div className="max-w-4xl mx-auto px-4 py-2 flex items-center justify-center gap-2 text-sm text-green-700 dark:text-green-400">
+            <Circle className="h-2 w-2 bg-green-500 rounded-full animate-pulse" />
+            <span>
+              Real-time sync active with {connectedTabs} other{" "}
+              {connectedTabs === 1 ? "tab" : "tabs"}. Changes sync instantly!
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* Editor */}
       <main className="flex-1 max-w-4xl mx-auto w-full px-4 py-8">
         <textarea
@@ -220,17 +207,20 @@ export function DocumentEditor() {
             <span>{content.split(/\s+/).filter(Boolean).length} words</span>
           </div>
           <div className="flex items-center gap-4">
-            {isConnected && (
-              <span className="text-xs text-green-600 dark:text-green-400">
-                Real-time sync active
+            {isTabSyncActive && (
+              <span
+                className="text-xs font-mono truncate max-w-[150px]"
+                title={tabId}
+              >
+                Tab: {tabId.slice(0, 12)}...
               </span>
             )}
             {documentId && (
               <span
-                className="text-xs font-mono truncate max-w-[200px]"
+                className="text-xs font-mono truncate max-w-[150px]"
                 title={documentId}
               >
-                ID: {documentId}
+                Doc: {documentId.slice(0, 8)}...
               </span>
             )}
           </div>

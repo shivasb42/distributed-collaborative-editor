@@ -2,21 +2,22 @@
 
 import { useEffect, useRef } from "react";
 import { useYjsDocument } from "@/hooks/use-yjs-document";
-import { Save, FileText, Check, Loader2 } from "lucide-react";
-
-const DOCUMENT_ID = "main-document";
+import { Save, FileText, Check, Loader2, Wifi, WifiOff, CloudOff } from "lucide-react";
 
 export function DocumentEditor() {
   const {
+    documentId,
     title,
     content,
     isLoading,
     saveStatus,
     lastSaved,
+    unsyncedCount,
+    isOnline,
     updateTitle,
     updateContent,
     manualSave,
-  } = useYjsDocument({ documentId: DOCUMENT_ID });
+  } = useYjsDocument();
 
   const contentRef = useRef<HTMLTextAreaElement>(null);
 
@@ -65,11 +66,41 @@ export function DocumentEditor() {
             />
           </div>
           <div className="flex items-center gap-3 shrink-0">
+            {/* Online/Offline indicator */}
+            <div
+              className={`hidden sm:flex items-center gap-1.5 px-2 py-1 rounded text-xs ${
+                isOnline
+                  ? "bg-muted text-muted-foreground"
+                  : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
+              }`}
+            >
+              {isOnline ? (
+                <>
+                  <Wifi className="h-3 w-3" />
+                  <span>Online</span>
+                </>
+              ) : (
+                <>
+                  <WifiOff className="h-3 w-3" />
+                  <span>Offline</span>
+                </>
+              )}
+            </div>
+
+            {/* Unsynced indicator */}
+            {unsyncedCount > 0 && (
+              <div className="hidden sm:flex items-center gap-1.5 px-2 py-1 bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 rounded text-xs">
+                <CloudOff className="h-3 w-3" />
+                <span>{unsyncedCount} pending</span>
+              </div>
+            )}
+
             {/* CRDT indicator */}
             <div className="hidden sm:flex items-center gap-1.5 px-2 py-1 bg-muted rounded text-xs text-muted-foreground">
               <span className="w-2 h-2 rounded-full bg-green-500" />
               <span>CRDT</span>
             </div>
+
             {/* Save status indicator */}
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               {saveStatus === "saving" && (
@@ -90,6 +121,7 @@ export function DocumentEditor() {
                 </span>
               )}
             </div>
+
             {/* Manual save button */}
             <button
               onClick={manualSave}
@@ -117,8 +149,15 @@ export function DocumentEditor() {
       {/* Footer */}
       <footer className="border-t border-border bg-card">
         <div className="max-w-4xl mx-auto px-4 py-2 flex items-center justify-between text-sm text-muted-foreground">
-          <span>{content.length} characters</span>
-          <span>{content.split(/\s+/).filter(Boolean).length} words</span>
+          <div className="flex items-center gap-4">
+            <span>{content.length} characters</span>
+            <span>{content.split(/\s+/).filter(Boolean).length} words</span>
+          </div>
+          {documentId && (
+            <span className="text-xs font-mono truncate max-w-[200px]" title={documentId}>
+              ID: {documentId}
+            </span>
+          )}
         </div>
       </footer>
     </div>

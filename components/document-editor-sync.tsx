@@ -391,7 +391,7 @@ export function DocumentEditorWithSync({ documentId }: DocumentEditorWithSyncPro
     );
   }
 
-  const totalConnected = connectedTabs + connectedClients;
+  const totalConnected = connectedTabs + Math.max(0, connectedClients - 1);
 
   const getSyncBadge = () => {
     if (simulatedOffline) {

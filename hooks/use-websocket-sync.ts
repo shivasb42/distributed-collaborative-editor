@@ -77,12 +77,20 @@ export function useWebSocketSync({
         console.log("[v0] Joining document room:", documentId);
         sendMessage({ type: "join", documentId });
         
-        // Send our current state for sync
-        const stateVector = Y.encodeStateVector(ydoc);
+        // Send our FULL STATE to the server so it can store it
+        // This ensures the server has our document even if we're the first client
+        const fullState = Y.encodeStateAsUpdate(ydoc);
+        console.log("[v0] Sending full state to server:", fullState.length, "bytes");
+        sendMessage({
+          type: "update",
+          documentId,
+          update: Array.from(fullState),
+        });
+        
+        // Also request any state the server has (in case others edited while we were offline)
         sendMessage({
           type: "sync-request",
           documentId,
-          stateVector: Array.from(stateVector),
         });
       };
 

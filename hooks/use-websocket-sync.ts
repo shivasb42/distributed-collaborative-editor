@@ -53,7 +53,9 @@ export function useWebSocketSync({
   // Handle incoming Yjs update
   const handleRemoteUpdate = useCallback((update: Uint8Array) => {
     if (ydoc) {
+      console.log("[v0] Applying remote update to Y.Doc, size:", update.length);
       Y.applyUpdate(ydoc, update, "websocket");
+      console.log("[v0] Y.Doc after update - title:", ydoc.getText("title").toString(), "content length:", ydoc.getText("content").toString().length);
     }
   }, [ydoc]);
 

@@ -12,6 +12,7 @@ import {
   getUnsyncedCount,
   type Document,
 } from "@/lib/indexeddb";
+import { useSyncProvider } from "./use-sync-provider";
 
 const AUTO_SAVE_DELAY = 1000;
 
@@ -31,6 +32,19 @@ export function useYjsDocument() {
 
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isInitializedRef = useRef(false);
+
+  // Sync provider for real-time collaboration
+  const {
+    status: syncStatus,
+    connectedClients,
+    error: syncError,
+    isConnected,
+  } = useSyncProvider({
+    ydoc: ydocRef.current,
+    documentId,
+    serverUrl: process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:1234",
+    autoConnect: true,
+  });
 
   // Track online/offline status
   useEffect(() => {
@@ -117,7 +131,7 @@ export function useYjsDocument() {
       const count = await getUnsyncedCount(docId);
       setUnsyncedCount(count);
 
-      // Subscribe to Y.Doc changes
+      // Subscribe to Y.Doc changes (from local AND remote)
       yTitle.observe(() => {
         setTitle(yTitle.toString());
       });
@@ -126,10 +140,10 @@ export function useYjsDocument() {
         setContent(yContent.toString());
       });
 
-      // Listen for updates to track unsynced changes
+      // Listen for updates to track unsynced changes (for persistence)
       ydoc.on("update", async (update: Uint8Array, origin: unknown) => {
-        // Only track updates that originated locally (not from loading)
-        if (origin !== "load" && isInitializedRef.current) {
+        // Track all updates except those from initial load
+        if (origin !== "load" && origin !== "remote" && isInitializedRef.current) {
           try {
             await addUnsyncedUpdate(docId, update);
             const count = await getUnsyncedCount(docId);
@@ -263,11 +277,9 @@ export function useYjsDocument() {
   useEffect(() => {
     const handleBeforeUnload = () => {
       if (ydocRef.current && documentId) {
-        // Synchronous save attempt - may not complete
         const state = Y.encodeStateAsUpdate(ydocRef.current);
         const title = yTitleRef.current?.toString() || "Untitled Document";
         
-        // Use sendBeacon for reliable delivery on unload
         const data = JSON.stringify({
           id: documentId,
           title,
@@ -275,7 +287,6 @@ export function useYjsDocument() {
           updatedAt: Date.now(),
         });
         
-        // Store in sessionStorage as backup
         try {
           sessionStorage.setItem(`backup-${documentId}`, data);
         } catch {
@@ -300,7 +311,6 @@ export function useYjsDocument() {
           const backupTime = data.updatedAt;
           const currentDoc = await getDocument(documentId);
 
-          // Only apply backup if it's newer than saved doc
           if (!currentDoc || backupTime > currentDoc.updatedAt) {
             const yjsState = new Uint8Array(data.yjsState);
             if (ydocRef.current) {
@@ -309,7 +319,6 @@ export function useYjsDocument() {
             }
           }
 
-          // Clear backup after processing
           sessionStorage.removeItem(`backup-${documentId}`);
         }
       } catch {
@@ -333,5 +342,10 @@ export function useYjsDocument() {
     updateContent,
     manualSave,
     getYDoc,
+    // Sync status
+    syncStatus,
+    connectedClients,
+    syncError,
+    isConnected,
   };
 }

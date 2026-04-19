@@ -58,6 +58,12 @@ export function DocumentEditorWithSync({ documentId }: DocumentEditorWithSyncPro
   const [isOnline, setIsOnline] = useState(true);
   const [simulatedOffline, setSimulatedOffline] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [debugLogs, setDebugLogs] = useState<string[]>([]);
+  const [showDebug, setShowDebug] = useState(false);
+  
+  const addDebugLog = useCallback((msg: string) => {
+    setDebugLogs(prev => [...prev.slice(-20), `${new Date().toISOString().slice(11,19)} ${msg}`]);
+  }, []);
   
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isInitializedRef = useRef(false);
@@ -127,15 +133,23 @@ export function DocumentEditorWithSync({ documentId }: DocumentEditorWithSyncPro
     
     loadDocument();
 
-    // Subscribe to Y.js changes
-    yTitle.observe(() => {
-      console.log("[v0] Y.Title changed:", yTitle.toString());
-      setTitle(yTitle.toString());
-    });
-    yContent.observe(() => {
-      console.log("[v0] Y.Content changed, length:", yContent.toString().length);
-      setContent(yContent.toString());
-    });
+    // Subscribe to Y.js changes - these fire for ALL changes including remote
+    const titleObserver = () => {
+      const newTitle = yTitle.toString();
+      console.log("[v0] Y.Title changed:", newTitle);
+      setTitle(newTitle);
+      addDebugLog(`Title: "${newTitle.slice(0,30)}"`);
+    };
+    const contentObserver = () => {
+      const newContent = yContent.toString();
+      console.log("[v0] Y.Content changed, length:", newContent.length);
+      setContent(newContent);
+      addDebugLog(`Content: ${newContent.length} chars`);
+    };
+    
+    yTitle.observe(titleObserver);
+    yContent.observe(contentObserver);
+    addDebugLog("Observers set up");
     
     // Track updates for persistence
     ydoc.on("update", async (update: Uint8Array, origin: unknown) => {
@@ -183,6 +197,7 @@ export function DocumentEditorWithSync({ documentId }: DocumentEditorWithSyncPro
     ydoc: isDocReady ? ydocRef.current : null,
     documentId,
     enabled: effectiveOnline,
+    onDebugLog: addDebugLog,
   });
 
   // Presence
@@ -539,6 +554,23 @@ export function DocumentEditorWithSync({ documentId }: DocumentEditorWithSyncPro
           </div>
         </div>
       </footer>
+
+      {/* Debug Panel */}
+      <div className="fixed bottom-4 left-4 z-50">
+        <Button size="sm" variant="outline" onClick={() => setShowDebug(!showDebug)}>
+          Debug
+        </Button>
+        {showDebug && (
+          <div className="absolute bottom-10 left-0 w-80 max-h-60 overflow-auto bg-black text-green-400 text-xs font-mono p-2 rounded shadow-lg">
+            <div>WS: {wsStatus} | Clients: {connectedClients}</div>
+            <div>Doc ready: {isDocReady ? "yes" : "no"}</div>
+            <div>Title: {title.slice(0,30)}</div>
+            <div>Content len: {content.length}</div>
+            <hr className="my-1 border-green-800" />
+            {debugLogs.map((log, i) => <div key={i}>{log}</div>)}
+          </div>
+        )}
+      </div>
 
       {/* Test Panel */}
       <TestPanel

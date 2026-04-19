@@ -34,7 +34,12 @@ export function useWebSocketSync({
   documentId,
   serverUrl = process.env.NEXT_PUBLIC_WS_URL || getDefaultWsUrl(),
   enabled = true,
-}: UseWebSocketSyncOptions) {
+  onDebugLog,
+}: UseWebSocketSyncOptions & { onDebugLog?: (msg: string) => void }) {
+  const log = (msg: string) => {
+    console.log("[v0]", msg);
+    onDebugLog?.(msg);
+  };
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const reconnectAttemptsRef = useRef(0);
@@ -71,12 +76,12 @@ export function useWebSocketSync({
       wsRef.current = ws;
 
       ws.onopen = () => {
-        console.log("[v0] WebSocket connected to", serverUrl);
+        log(`WS connected to ${serverUrl}`);
         setStatus("connected");
         reconnectAttemptsRef.current = 0;
         
         // Join the document room
-        console.log("[v0] Joining document room:", documentId);
+        log(`Joining room: ${documentId}`);
         sendMessage({ type: "join", documentId });
         
         // Send our FULL STATE to the server so it can store it
@@ -99,18 +104,18 @@ export function useWebSocketSync({
       ws.onmessage = (event) => {
         try {
           const message: SyncMessage = JSON.parse(event.data);
-          console.log("[v0] WebSocket received:", message.type);
+          log(`WS received: ${message.type}`);
 
           switch (message.type) {
             case "update":
-              console.log("[v0] Received remote update, applying...");
+              log(`Remote update: ${message.update?.length} bytes`);
               if (message.update) {
                 handleRemoteUpdate(new Uint8Array(message.update));
               }
               break;
 
             case "sync-response":
-              console.log("[v0] Received sync response, applying state...");
+              log(`Sync response: ${message.state?.length} bytes`);
               if (message.state) {
                 handleRemoteUpdate(new Uint8Array(message.state));
               }
@@ -118,17 +123,17 @@ export function useWebSocketSync({
 
             case "client-joined":
             case "client-left":
-              console.log("[v0] Client count:", message.clientCount);
+              log(`Client count: ${message.clientCount}`);
               setConnectedClients(message.clientCount || 0);
               break;
 
             case "error":
-              console.log("[v0] WebSocket error:", message.message);
+              log(`WS error: ${message.message}`);
               setError(message.message || "Unknown error");
               break;
           }
         } catch (err) {
-          console.error("[v0] Failed to parse WebSocket message:", err);
+          log(`Parse error: ${err}`);
         }
       };
 

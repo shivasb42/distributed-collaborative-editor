@@ -5,6 +5,10 @@
 
 import { WebSocketServer, WebSocket } from "ws";
 import * as Y from "yjs";
+import {
+  getSharedDocumentState,
+  scheduleSharedDocumentUpdate,
+} from "../lib/shared-documents";
 
 const PORT = Number(process.env.WS_PORT) || 1234;
 
@@ -101,6 +105,21 @@ function handleJoin(ws: WebSocket, documentId: string) {
       documentId,
       state: Array.from(existingState),
     });
+  } else {
+    void (async () => {
+      const persistedState = await getSharedDocumentState(documentId);
+      if (persistedState && !documentStates.has(documentId)) {
+        documentStates.set(documentId, persistedState);
+        console.log(
+          `Loaded persisted state for ${documentId} (${persistedState.length} bytes)`
+        );
+        sendMessage(ws, {
+          type: "sync-response",
+          documentId,
+          state: Array.from(persistedState),
+        });
+      }
+    })();
   }
 
   // Notify other clients about the new peer
@@ -147,11 +166,13 @@ function handleUpdate(ws: WebSocket, documentId: string, update: Uint8Array) {
     Y.applyUpdate(ydoc, update);
     const mergedState = Y.encodeStateAsUpdate(ydoc);
     documentStates.set(documentId, mergedState);
+    scheduleSharedDocumentUpdate(documentId, mergedState);
     ydoc.destroy();
     console.log(`Merged state, new size: ${mergedState.length} bytes`);
   } else {
     // First update for this document
     documentStates.set(documentId, update);
+    scheduleSharedDocumentUpdate(documentId, update);
     console.log(`Stored initial state: ${update.length} bytes`);
   }
 

@@ -128,8 +128,14 @@ export function DocumentEditorWithSync({ documentId }: DocumentEditorWithSyncPro
     loadDocument();
 
     // Subscribe to Y.js changes
-    yTitle.observe(() => setTitle(yTitle.toString()));
-    yContent.observe(() => setContent(yContent.toString()));
+    yTitle.observe(() => {
+      console.log("[v0] Y.Title changed:", yTitle.toString());
+      setTitle(yTitle.toString());
+    });
+    yContent.observe(() => {
+      console.log("[v0] Y.Content changed, length:", yContent.toString().length);
+      setContent(yContent.toString());
+    });
     
     // Track updates for persistence
     ydoc.on("update", async (update: Uint8Array, origin: unknown) => {

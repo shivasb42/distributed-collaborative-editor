@@ -1,7 +1,10 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { useYjsDocument } from "@/hooks/use-yjs-document";
+import { usePresence } from "@/hooks/use-presence";
+import { PresenceAvatars, EditingIndicator } from "@/components/presence-avatars";
+import { TestPanel } from "@/components/test-panel";
 import {
   Save,
   FileText,
@@ -10,12 +13,11 @@ import {
   Wifi,
   WifiOff,
   CloudOff,
-  Monitor,
   Circle,
   RefreshCw,
   AlertCircle,
-  CloudUpload,
 } from "lucide-react";
+import * as Y from "yjs";
 
 export function DocumentEditor() {
   const {
@@ -30,6 +32,8 @@ export function DocumentEditor() {
     updateTitle,
     updateContent,
     manualSave,
+    getYDoc,
+    getStateVector,
     // Tab sync status
     isTabSyncActive,
     connectedTabs,
@@ -39,7 +43,24 @@ export function DocumentEditor() {
     flushOfflineQueue,
   } = useYjsDocument();
 
+  // Presence for collaboration
+  const {
+    currentUser,
+    remoteUsers,
+    updateCursor,
+    updateSelection,
+    clearEditing,
+  } = usePresence({
+    documentId,
+    enabled: true,
+  });
+
   const contentRef = useRef<HTMLTextAreaElement>(null);
+  const titleRef = useRef<HTMLInputElement>(null);
+  
+  // Simulated offline state for testing
+  const [simulatedOffline, setSimulatedOffline] = useState(false);
+  const effectiveOnline = isOnline && !simulatedOffline;
 
   const handleTitleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     updateTitle(e.target.value);
@@ -48,6 +69,43 @@ export function DocumentEditor() {
   const handleContentChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const cursorPosition = e.target.selectionStart;
     updateContent(e.target.value, cursorPosition);
+  };
+
+  // Track cursor/selection for presence
+  const handleTitleFocus = () => {
+    if (titleRef.current) {
+      updateCursor(titleRef.current.selectionStart, "title");
+    }
+  };
+
+  const handleTitleSelect = () => {
+    if (titleRef.current) {
+      updateSelection(
+        titleRef.current.selectionStart,
+        titleRef.current.selectionEnd,
+        "title"
+      );
+    }
+  };
+
+  const handleContentFocus = () => {
+    if (contentRef.current) {
+      updateCursor(contentRef.current.selectionStart, "content");
+    }
+  };
+
+  const handleContentSelect = () => {
+    if (contentRef.current) {
+      updateSelection(
+        contentRef.current.selectionStart,
+        contentRef.current.selectionEnd,
+        "content"
+      );
+    }
+  };
+
+  const handleBlur = () => {
+    clearEditing();
   };
 
   // Keyboard shortcut for save
@@ -62,6 +120,52 @@ export function DocumentEditor() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [manualSave]);
 
+  // Test panel callbacks
+  const handleSimulateOffline = useCallback(() => {
+    setSimulatedOffline(true);
+  }, []);
+
+  const handleSimulateOnline = useCallback(() => {
+    setSimulatedOffline(false);
+    // Trigger reconciliation
+    setTimeout(() => {
+      requestReconciliation();
+      flushOfflineQueue();
+    }, 100);
+  }, [requestReconciliation, flushOfflineQueue]);
+
+  const handleForceSync = useCallback(() => {
+    requestReconciliation();
+    flushOfflineQueue();
+  }, [requestReconciliation, flushOfflineQueue]);
+
+  const handleClearLocalData = useCallback(async () => {
+    // Clear IndexedDB
+    const dbs = await indexedDB.databases();
+    for (const db of dbs) {
+      if (db.name) {
+        indexedDB.deleteDatabase(db.name);
+      }
+    }
+    // Clear localStorage
+    localStorage.clear();
+    // Reload
+    window.location.reload();
+  }, []);
+
+  const handleDuplicateUpdate = useCallback(() => {
+    // Send a duplicate/redundant update to test idempotency
+    const ydoc = getYDoc();
+    if (ydoc) {
+      const state = Y.encodeStateAsUpdate(ydoc);
+      Y.applyUpdate(ydoc, state, "test-duplicate");
+    }
+  }, [getYDoc]);
+
+  const getStateVectorCallback = useCallback(() => {
+    return getStateVector();
+  }, [getStateVector]);
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-background">
@@ -71,6 +175,15 @@ export function DocumentEditor() {
   }
 
   const getSyncStatusBadge = () => {
+    if (simulatedOffline) {
+      return (
+        <div className="flex items-center gap-1.5 px-2 py-1 bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 rounded text-xs">
+          <WifiOff className="h-3 w-3" />
+          <span>Simulated Offline</span>
+        </div>
+      );
+    }
+
     switch (syncStatus.state) {
       case "offline":
         return (
@@ -121,32 +234,25 @@ export function DocumentEditor() {
         <div className="max-w-4xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3 flex-1 min-w-0">
             <FileText className="h-5 w-5 text-muted-foreground shrink-0" />
-            <input
-              type="text"
-              value={title}
-              onChange={handleTitleChange}
-              className="flex-1 bg-transparent text-lg font-medium text-foreground border-none outline-none focus:ring-0 min-w-0"
-              placeholder="Document title..."
-            />
+            <div className="relative flex-1 min-w-0">
+              <input
+                ref={titleRef}
+                type="text"
+                value={title}
+                onChange={handleTitleChange}
+                onFocus={handleTitleFocus}
+                onSelect={handleTitleSelect}
+                onBlur={handleBlur}
+                className="w-full bg-transparent text-lg font-medium text-foreground border-none outline-none focus:ring-0"
+                placeholder="Document title..."
+              />
+              <EditingIndicator remoteUsers={remoteUsers} field="title" />
+            </div>
           </div>
+
           <div className="flex items-center gap-2 shrink-0">
-            {/* Connected tabs */}
-            {isTabSyncActive && (
-              <div
-                className={`hidden sm:flex items-center gap-1.5 px-2 py-1 rounded text-xs ${
-                  connectedTabs > 0
-                    ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
-                    : "bg-muted text-muted-foreground"
-                }`}
-              >
-                <Monitor className="h-3 w-3" />
-                <span>
-                  {connectedTabs > 0
-                    ? `${connectedTabs + 1} tabs`
-                    : "1 tab"}
-                </span>
-              </div>
-            )}
+            {/* Presence Avatars */}
+            <PresenceAvatars currentUser={currentUser} remoteUsers={remoteUsers} />
 
             {/* Sync status */}
             <div className="hidden sm:block">{getSyncStatusBadge()}</div>
@@ -154,12 +260,12 @@ export function DocumentEditor() {
             {/* Online/Offline */}
             <div
               className={`hidden sm:flex items-center gap-1.5 px-2 py-1 rounded text-xs ${
-                isOnline
+                effectiveOnline
                   ? "bg-muted text-muted-foreground"
                   : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
               }`}
             >
-              {isOnline ? (
+              {effectiveOnline ? (
                 <>
                   <Wifi className="h-3 w-3" />
                   <span>Online</span>
@@ -176,7 +282,9 @@ export function DocumentEditor() {
             {(syncStatus.pendingUpdates > 0 || unsyncedCount > 0) && (
               <div className="hidden sm:flex items-center gap-1.5 px-2 py-1 bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 rounded text-xs">
                 <CloudOff className="h-3 w-3" />
-                <span>{syncStatus.pendingUpdates || unsyncedCount} pending</span>
+                <span>
+                  {syncStatus.pendingUpdates || unsyncedCount} pending
+                </span>
               </div>
             )}
 
@@ -207,21 +315,6 @@ export function DocumentEditor() {
               )}
             </div>
 
-            {/* Sync button (when offline with pending) */}
-            {!isOnline && syncStatus.pendingUpdates > 0 && (
-              <button
-                onClick={() => {
-                  requestReconciliation();
-                  flushOfflineQueue();
-                }}
-                disabled={!isOnline}
-                className="flex items-center gap-2 px-3 py-1.5 bg-amber-600 text-white rounded-md text-sm font-medium hover:bg-amber-700 transition-colors disabled:opacity-50"
-              >
-                <CloudUpload className="h-4 w-4" />
-                <span className="hidden sm:inline">Sync</span>
-              </button>
-            )}
-
             {/* Save button */}
             <button
               onClick={manualSave}
@@ -235,31 +328,34 @@ export function DocumentEditor() {
       </header>
 
       {/* Sync Banner */}
-      {isTabSyncActive && connectedTabs > 0 && syncStatus.state === "synced" && (
-        <div className="bg-green-50 dark:bg-green-900/20 border-b border-green-200 dark:border-green-800">
-          <div className="max-w-4xl mx-auto px-4 py-2 flex items-center justify-center gap-2 text-sm text-green-700 dark:text-green-400">
-            <Circle className="h-2 w-2 bg-green-500 rounded-full animate-pulse" />
-            <span>
-              Real-time sync with {connectedTabs} other{" "}
-              {connectedTabs === 1 ? "tab" : "tabs"}
-            </span>
-            {syncStatus.lastSyncTime && (
-              <span className="text-xs opacity-75">
-                - Last sync: {syncStatus.lastSyncTime.toLocaleTimeString()}
+      {isTabSyncActive &&
+        connectedTabs > 0 &&
+        syncStatus.state === "synced" &&
+        !simulatedOffline && (
+          <div className="bg-green-50 dark:bg-green-900/20 border-b border-green-200 dark:border-green-800">
+            <div className="max-w-4xl mx-auto px-4 py-2 flex items-center justify-center gap-2 text-sm text-green-700 dark:text-green-400">
+              <Circle className="h-2 w-2 bg-green-500 rounded-full animate-pulse" />
+              <span>
+                Real-time sync with {connectedTabs} other{" "}
+                {connectedTabs === 1 ? "tab" : "tabs"}
               </span>
-            )}
+              {syncStatus.lastSyncTime && (
+                <span className="text-xs opacity-75">
+                  - Last sync: {syncStatus.lastSyncTime.toLocaleTimeString()}
+                </span>
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        )}
 
       {/* Offline Banner */}
-      {!isOnline && (
+      {(!effectiveOnline || simulatedOffline) && (
         <div className="bg-amber-50 dark:bg-amber-900/20 border-b border-amber-200 dark:border-amber-800">
           <div className="max-w-4xl mx-auto px-4 py-2 flex items-center justify-center gap-2 text-sm text-amber-700 dark:text-amber-400">
             <WifiOff className="h-4 w-4" />
             <span>
-              You are offline. Changes are saved locally and will sync when you
-              reconnect.
+              {simulatedOffline ? "Simulated offline mode. " : "You are offline. "}
+              Changes are saved locally and will sync when you reconnect.
             </span>
             {syncStatus.pendingUpdates > 0 && (
               <span className="font-medium">
@@ -271,7 +367,7 @@ export function DocumentEditor() {
       )}
 
       {/* Reconnecting Banner */}
-      {syncStatus.state === "reconnecting" && (
+      {syncStatus.state === "reconnecting" && !simulatedOffline && (
         <div className="bg-blue-50 dark:bg-blue-900/20 border-b border-blue-200 dark:border-blue-800">
           <div className="max-w-4xl mx-auto px-4 py-2 flex items-center justify-center gap-2 text-sm text-blue-700 dark:text-blue-400">
             <RefreshCw className="h-4 w-4 animate-spin" />
@@ -281,11 +377,15 @@ export function DocumentEditor() {
       )}
 
       {/* Editor */}
-      <main className="flex-1 max-w-4xl mx-auto w-full px-4 py-8">
+      <main className="flex-1 max-w-4xl mx-auto w-full px-4 py-8 relative">
+        <EditingIndicator remoteUsers={remoteUsers} field="content" />
         <textarea
           ref={contentRef}
           value={content}
           onChange={handleContentChange}
+          onFocus={handleContentFocus}
+          onSelect={handleContentSelect}
+          onBlur={handleBlur}
           className="w-full h-full min-h-[calc(100vh-200px)] bg-transparent text-foreground text-base leading-relaxed resize-none border-none outline-none focus:ring-0"
           placeholder="Start writing your document..."
           spellCheck
@@ -316,14 +416,27 @@ export function DocumentEditor() {
                 Doc: {documentId.slice(0, 8)}...
               </span>
             )}
-            {syncStatus.state !== "synced" && (
-              <span className="text-xs">
-                Status: {syncStatus.state}
-              </span>
-            )}
+            <span className="text-xs">
+              User: {currentUser.name}
+            </span>
           </div>
         </div>
       </footer>
+
+      {/* Test Panel */}
+      <TestPanel
+        documentId={documentId}
+        isOnline={effectiveOnline}
+        connectedTabs={connectedTabs}
+        unsyncedCount={unsyncedCount}
+        syncStatus={syncStatus}
+        onSimulateOffline={handleSimulateOffline}
+        onSimulateOnline={handleSimulateOnline}
+        onForceSync={handleForceSync}
+        onClearLocalData={handleClearLocalData}
+        onDuplicateUpdate={handleDuplicateUpdate}
+        getStateVector={getStateVectorCallback}
+      />
     </div>
   );
 }

@@ -1,24 +1,10 @@
-/**
- * Standalone WebSocket server for Yjs sync
- * Run with: npx tsx server/websocket-server.ts
- */
-
-import { WebSocketServer, WebSocket } from "ws";
+import type { WebSocketServer, WebSocket } from "ws";
 import * as Y from "yjs";
 import {
   getSharedDocumentState,
   scheduleSharedDocumentUpdate,
 } from "../lib/shared-documents";
 
-const PORT = Number(process.env.WS_PORT) || 1234;
-
-// In-memory storage for document states
-const documentStates = new Map<string, Uint8Array>();
-
-// Connected clients grouped by document ID
-const documentClients = new Map<string, Set<WebSocket>>();
-
-// Message types
 type SyncMessage =
   | { type: "join"; documentId: string }
   | { type: "update"; documentId: string; update: number[] }
@@ -28,59 +14,70 @@ type SyncMessage =
   | { type: "client-left"; clientCount: number }
   | { type: "error"; message: string };
 
-const wss = new WebSocketServer({ port: PORT, host: "10.0.0.194" });
+const documentStates = new Map<string, Uint8Array>();
+const documentClients = new Map<string, Set<WebSocket>>();
 
-console.log(`WebSocket sync server running on ws://0.0.0.0:${PORT} (accessible from any device on your network)`);
+export function setupWsHandlers(wss: WebSocketServer) {
+  wss.on("connection", (ws: WebSocket) => {
+    let currentDocumentId: string | null = null;
 
-wss.on("connection", (ws: WebSocket) => {
-  let currentDocumentId: string | null = null;
+    console.log("New client connected");
 
-  console.log("New client connected");
+    ws.on("message", (data: Buffer) => {
+      try {
+        const message: SyncMessage = JSON.parse(data.toString());
 
-  ws.on("message", (data: Buffer) => {
-    try {
-      const message: SyncMessage = JSON.parse(data.toString());
+        switch (message.type) {
+          case "join":
+            currentDocumentId = message.documentId;
+            handleJoin(ws, message.documentId);
+            break;
 
-      switch (message.type) {
-        case "join":
-          currentDocumentId = message.documentId;
-          handleJoin(ws, message.documentId);
-          break;
+          case "update":
+            handleUpdate(ws, message.documentId, new Uint8Array(message.update));
+            break;
 
-        case "update":
-          handleUpdate(ws, message.documentId, new Uint8Array(message.update));
-          break;
+          case "sync-request":
+            handleSyncRequest(ws, message.documentId);
+            break;
 
-        case "sync-request":
-          handleSyncRequest(ws, message.documentId);
-          break;
-
-        default:
-          console.log("Unknown message type:", message);
+          default:
+            console.log("Unknown message type:", message);
+        }
+      } catch (error) {
+        console.error("Error handling message:", error);
+        sendMessage(ws, { type: "error", message: "Invalid message format" });
       }
-    } catch (error) {
-      console.error("Error handling message:", error);
-      sendMessage(ws, { type: "error", message: "Invalid message format" });
-    }
+    });
+
+    ws.on("close", () => {
+      console.log("Client disconnected");
+      if (currentDocumentId) {
+        handleLeave(ws, currentDocumentId);
+      }
+    });
+
+    ws.on("error", (error) => {
+      console.error("WebSocket error:", error);
+      if (currentDocumentId) {
+        handleLeave(ws, currentDocumentId);
+      }
+    });
   });
 
-  ws.on("close", () => {
-    console.log("Client disconnected");
-    if (currentDocumentId) {
-      handleLeave(ws, currentDocumentId);
+  setInterval(() => {
+    const docCount = documentStates.size;
+    const clientCount = Array.from(documentClients.values()).reduce(
+      (sum, clients) => sum + clients.size,
+      0
+    );
+    if (docCount > 0 || clientCount > 0) {
+      console.log(`Stats: ${docCount} documents, ${clientCount} clients`);
     }
-  });
-
-  ws.on("error", (error) => {
-    console.error("WebSocket error:", error);
-    if (currentDocumentId) {
-      handleLeave(ws, currentDocumentId);
-    }
-  });
-});
+  }, 30000);
+}
 
 function handleJoin(ws: WebSocket, documentId: string) {
-  // Add client to document room
   if (!documentClients.has(documentId)) {
     documentClients.set(documentId, new Set());
   }
@@ -91,10 +88,8 @@ function handleJoin(ws: WebSocket, documentId: string) {
     `Client joined document ${documentId}. Total clients: ${clients.size}`
   );
 
-  // Notify client of successful join
   sendMessage(ws, { type: "client-joined", clientCount: clients.size });
 
-  // Send existing document state if available
   const existingState = documentStates.get(documentId);
   if (existingState) {
     console.log(
@@ -122,7 +117,6 @@ function handleJoin(ws: WebSocket, documentId: string) {
     })();
   }
 
-  // Notify other clients about the new peer
   broadcastToOthers(ws, documentId, {
     type: "client-joined",
     clientCount: clients.size,
@@ -138,13 +132,11 @@ function handleLeave(ws: WebSocket, documentId: string) {
       `Client left document ${documentId}. Remaining clients: ${clients.size}`
     );
 
-    // Notify remaining clients
     broadcastToOthers(ws, documentId, {
       type: "client-left",
       clientCount: clients.size,
     });
 
-    // Clean up empty rooms (but keep state for future connections)
     if (clients.size === 0) {
       documentClients.delete(documentId);
     }
@@ -156,11 +148,9 @@ function handleUpdate(ws: WebSocket, documentId: string, update: Uint8Array) {
     `Received update for document ${documentId} (${update.length} bytes)`
   );
 
-  // Merge update into stored document state
   let currentState = documentStates.get(documentId);
 
   if (currentState) {
-    // Create a Y.Doc to merge states
     const ydoc = new Y.Doc();
     Y.applyUpdate(ydoc, currentState);
     Y.applyUpdate(ydoc, update);
@@ -170,13 +160,11 @@ function handleUpdate(ws: WebSocket, documentId: string, update: Uint8Array) {
     ydoc.destroy();
     console.log(`Merged state, new size: ${mergedState.length} bytes`);
   } else {
-    // First update for this document
     documentStates.set(documentId, update);
     scheduleSharedDocumentUpdate(documentId, update);
     console.log(`Stored initial state: ${update.length} bytes`);
   }
 
-  // Broadcast update to all other clients
   const clients = documentClients.get(documentId);
   if (clients) {
     console.log(`Broadcasting to ${clients.size - 1} other clients`);
@@ -204,7 +192,7 @@ function handleSyncRequest(ws: WebSocket, documentId: string) {
 }
 
 function sendMessage(ws: WebSocket, message: SyncMessage) {
-  if (ws.readyState === WebSocket.OPEN) {
+  if (ws.readyState === 1) {
     ws.send(JSON.stringify(message));
   }
 }
@@ -218,30 +206,9 @@ function broadcastToOthers(
   if (clients) {
     const messageStr = JSON.stringify(message);
     for (const client of clients) {
-      if (client !== sender && client.readyState === WebSocket.OPEN) {
+      if (client !== sender && client.readyState === 1) {
         client.send(messageStr);
       }
     }
   }
 }
-
-// Graceful shutdown
-process.on("SIGINT", () => {
-  console.log("\nShutting down server...");
-  wss.close(() => {
-    console.log("Server closed");
-    process.exit(0);
-  });
-});
-
-// Log stats periodically
-setInterval(() => {
-  const docCount = documentStates.size;
-  const clientCount = Array.from(documentClients.values()).reduce(
-    (sum, clients) => sum + clients.size,
-    0
-  );
-  if (docCount > 0 || clientCount > 0) {
-    console.log(`Stats: ${docCount} documents, ${clientCount} clients`);
-  }
-}, 30000);

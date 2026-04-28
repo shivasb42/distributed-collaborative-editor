@@ -21,12 +21,19 @@ interface UseSyncProviderOptions {
   autoConnect?: boolean;
 }
 
+function getDefaultWsUrl() {
+  if (typeof window === "undefined") return "ws://localhost:3000/_ws";
+  const proto = window.location.protocol === "https:" ? "wss" : "ws";
+  return `${proto}://${window.location.host}/_ws`;
+}
+
 export function useSyncProvider({
   ydoc,
   documentId,
-  serverUrl = "ws://localhost:1234",
+  serverUrl,
   autoConnect = true,
 }: UseSyncProviderOptions) {
+  const resolvedUrl = serverUrl ?? (process.env.NEXT_PUBLIC_WS_URL || getDefaultWsUrl());
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const reconnectAttemptsRef = useRef(0);
@@ -48,7 +55,7 @@ export function useSyncProvider({
     setError(null);
 
     try {
-      const ws = new WebSocket(serverUrl);
+      const ws = new WebSocket(resolvedUrl);
       wsRef.current = ws;
 
       ws.onopen = () => {
@@ -146,7 +153,7 @@ export function useSyncProvider({
       setStatus("error");
       setError("Failed to connect");
     }
-  }, [ydoc, documentId, serverUrl, autoConnect]);
+  }, [ydoc, documentId, resolvedUrl, autoConnect]);
 
   const disconnect = useCallback(() => {
     if (reconnectTimeoutRef.current) {

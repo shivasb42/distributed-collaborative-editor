@@ -22,20 +22,30 @@ interface SyncMessage {
   message?: string;
 }
 
-// Auto-detect WebSocket URL based on current page hostname
+// Auto-detect WebSocket URL: same-origin, /_ws path, wss when https
 function getDefaultWsUrl() {
-  if (typeof window === "undefined") return "ws://localhost:1234";
-  const hostname = window.location.hostname;
-  return `ws://${hostname}:1234`;
+  if (typeof window === "undefined") return "ws://localhost:3000/_ws";
+  const proto = window.location.protocol === "https:" ? "wss" : "ws";
+  return `${proto}://${window.location.host}/_ws`;
 }
 
 export function useWebSocketSync({
   ydoc,
   documentId,
-  serverUrl = process.env.NEXT_PUBLIC_WS_URL || getDefaultWsUrl(),
+  serverUrl: serverUrlOption,
   enabled = true,
   onDebugLog,
 }: UseWebSocketSyncOptions & { onDebugLog?: (msg: string) => void }) {
+  // Same as default `serverUrl = env || getDefault()`: if NEXT_PUBLIC_WS_URL is set,
+  // getDefaultWsUrl() is never used (so a console.log *inside* getDefaultWsUrl would not run).
+  const serverUrl =
+    serverUrlOption ?? (process.env.NEXT_PUBLIC_WS_URL || getDefaultWsUrl());
+
+  useEffect(() => {
+    if (process.env.NODE_ENV !== "development") return;
+    console.log("[v0] WebSocket sync URL (resolved):", serverUrl);
+  }, [serverUrl]);
+
   const log = (msg: string) => {
     console.log("[v0]", msg);
     onDebugLog?.(msg);

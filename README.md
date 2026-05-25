@@ -198,19 +198,7 @@ NEXT_PUBLIC_WS_URL=ws://192.168.1.10:1234 npm run dev
 
 ---
 
-## What you can say on a resume
 
-- Built a **distributed, multi-replica**, **offline-first** collaborative editor in **TypeScript** (**Next.js** + **Node WebSocket** relay) for **N-way** real-time editing.
-- **IndexedDB** durability, **outbox reconciliation**, **BroadcastChannel** multi-tab sync, **CRDT-backed** live merge (**Yjs**).
-- Designed for **eventual consistency** and **partition-tolerant** editing with observable sync/degraded states.
-
----
-
-## License
-
-This project is provided as-is for learning and portfolio use. Add a `LICENSE` file (e.g. MIT) if you publish it publicly.
-
----
 
 ## Acknowledgments
 

@@ -1,6 +1,6 @@
 # Local-First Distributed Collaborative Editor
 
-A **distributed, local-first** collaborative document system in **TypeScript**: many independent **replicas** (browsers, tabs, devices) edit the same document concurrently, propagate updates through a **sync relay**, persist locally, and **converge** under partitions and flaky networks—built for real **multi-party** collaboration, not a toy two-window demo.
+A **distributed, local-first** collaborative document system in **TypeScript**: many independent **replicas** (browsers, tabs, devices) edit the same document concurrently, propagate updates through a **sync relay**, persist locally, and **converge** under partitions and flaky networks, built for real **multi-party** collaboration, not a toy two-window demo.
 
 ![Next.js](https://img.shields.io/badge/Next.js-16-black?style=flat-square&logo=next.js)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.7-blue?style=flat-square&logo=typescript)
@@ -12,10 +12,10 @@ A **distributed, local-first** collaborative document system in **TypeScript**: 
 
 This is a **distributed collaborative editor**: many nodes, one shared document, independent failure and reconnect. The replication story is first-class:
 
-- **Replicas** — every browser/tab/device is a full copy of document state (multi-primary editing).
-- **Relay** — WebSocket hub **fan-out** to the replica fleet; merged state for late joiners and recovery.
-- **Offline-first** — IndexedDB persists snapshots and queues unsynced deltas until reconnect.
-- **Eventual consistency** — concurrent edits converge via **CRDT-backed merge** (Yjs), not last-write-wins on raw strings.
+- **Replicas**: every browser/tab/device is a full copy of document state (multi-primary editing).
+- **Relay**: WebSocket hub **fan-out** to the replica fleet; merged state for late joiners and recovery.
+- **Offline-first**: IndexedDB persists snapshots and queues unsynced deltas until reconnect.
+- **Eventual consistency**: concurrent edits converge via **CRDT-backed merge** (Yjs), not last-write-wins on raw strings.
 
 Good fit for demos, coursework, or portfolio work in **distributed systems**, **local-first**, or **full-stack TypeScript**.
 
@@ -90,7 +90,7 @@ flowchart TB
 
 ## Quick start
 
-A **single process** runs everything — the Next.js app and the WebSocket relay are merged into one custom server (`server/index.ts`) on one port.
+A **single process** runs everything: the Next.js app and the WebSocket relay are merged into one custom server (`server/index.ts`) on one port.
 
 ### 1. Clone & install
 
@@ -107,12 +107,12 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). The WebSocket relay is served at `/_ws` on the same port — no second process, no extra config.
+Open [http://localhost:3000](http://localhost:3000). The WebSocket relay is served at `/_ws` on the same port, no second process, no extra config.
 
 ### 3. Open a document to the fleet
 
 1. Click **New Document** (or pick one from the shared list).
-2. **Share the document URL** with collaborators—other laptops on your LAN, phones on Wi‑Fi, extra browser profiles, or multiple tabs on one machine.
+2. **Share the document URL** with collaborators, other laptops on your LAN, phones on Wi‑Fi, extra browser profiles, or multiple tabs on one machine.
 3. Everyone edits at once; the relay broadcasts Yjs updates so **all replicas** stay aligned. Presence shows who is in the room.
 
 **Scale-out pattern:** one document ID → many replicas → single relay room → eventual consistency via CRDT merge. Add as many clients as you want; the architecture is **N-replica**, not pairwise.
@@ -139,7 +139,7 @@ Without `NEXT_PUBLIC_WS_URL`, clients use the merged relay at same-origin `/_ws`
 
 ## Environment variables
 
-All optional — the default merged-server flow needs none.
+All optional; the default merged-server flow needs none.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -151,10 +151,10 @@ All optional — the default merged-server flow needs none.
 
 ## Demo ideas (presentations / interviews)
 
-1. **Multi-replica convergence** — spin up several clients on one doc (tabs + devices); show live edits, presence, and connected-peer counts on the relay.
-2. **Network partition** — take one replica offline (airplane mode or test panel), keep editing, reconnect the fleet, and show outbox drain + state catch-up.
-3. **Replication paths** — contrast **inter-tab** (`BroadcastChannel`) vs **cross-network** (WebSocket relay) as two channels in one distributed editor.
-4. **Late joiner** — open a fresh replica mid-session; relay hydrates merged document state so the new node catches up without a full reset.
+1. **Multi-replica convergence**: spin up several clients on one doc (tabs + devices); show live edits, presence, and connected-peer counts on the relay.
+2. **Network partition**: take one replica offline (airplane mode or test panel), keep editing, reconnect the fleet, and show outbox drain + state catch-up.
+3. **Replication paths**: contrast **inter-tab** (`BroadcastChannel`) vs **cross-network** (WebSocket relay) as two channels in one distributed editor.
+4. **Late joiner**: open a fresh replica mid-session; relay hydrates merged document state so the new node catches up without a full reset.
 
 ---
 
@@ -198,10 +198,10 @@ All optional — the default merged-server flow needs none.
 
 ## Limitations (honest scope)
 
-- **Single relay** — not a multi-node cluster; the WebSocket process is a coordination hub, not consensus (Raft/Paxos).
-- **No auth** — anyone with a document URL can join; suitable for demos, not production multi-tenant security.
-- **Plain textarea** — rich text / comments / permissions are out of scope.
-- **Yjs handles text merge** — the app orchestrates transport, persistence, and UX; conflict-free editing semantics come from Yjs’s CRDT layer.
+- **Single relay**: not a multi-node cluster; the WebSocket process is a coordination hub, not consensus (Raft/Paxos).
+- **No auth**: anyone with a document URL can join; suitable for demos, not production multi-tenant security.
+- **Plain textarea**: rich text / comments / permissions are out of scope.
+- **Yjs handles text merge**: the app orchestrates transport, persistence, and UX; conflict-free editing semantics come from Yjs’s CRDT layer.
 
 ---
 
@@ -209,5 +209,5 @@ All optional — the default merged-server flow needs none.
 
 ## Acknowledgments
 
-- [Yjs](https://github.com/yjs/yjs) — CRDT document replication
-- [Local-first software](https://www.inkandswitch.com/local-first/) — design inspiration
+- [Yjs](https://github.com/yjs/yjs): CRDT document replication
+- [Local-first software](https://www.inkandswitch.com/local-first/): design inspiration

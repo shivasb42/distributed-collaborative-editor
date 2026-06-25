@@ -51,7 +51,7 @@ flowchart TB
   end
 
   subgraph relay["Central sync relay"]
-    WS[WebSocket :1234]
+    WS[WebSocket /_ws · same port as web app]
     MEM[(Merged state + persistence)]
   end
 
@@ -75,7 +75,7 @@ flowchart TB
 
 - **Frontend:** [Next.js](https://nextjs.org/) (App Router), React 19, Tailwind CSS, Radix UI
 - **Replication:** [Yjs](https://github.com/yjs/yjs) (CRDT document model)
-- **Transport:** Node `ws` WebSocket server (`server/websocket-server.ts`)
+- **Transport:** Node `ws` WebSocket relay merged into the Next.js server on a single port (`server/index.ts`, path `/_ws`). A standalone relay (`server/websocket-server.ts`) is also available for advanced/cross-host setups.
 - **Browser storage:** IndexedDB (`lib/indexeddb.ts`)
 - **API:** Next.js route handlers for document listing (`app/api/documents`)
 
@@ -90,34 +90,26 @@ flowchart TB
 
 ## Quick start
 
-Run **two services** locally (web app + sync relay). Collaborators can attach **as many replicas as you want** once both are up.
+A **single process** runs everything — the Next.js app and the WebSocket relay are merged into one custom server (`server/index.ts`) on one port.
 
-### 1. Install dependencies
+### 1. Clone & install
 
 ```bash
+git clone https://github.com/shivasb42/distributed-collaborative-editor.git
+cd distributed-collaborative-editor
 npm install
 # or: pnpm install
 ```
 
-### 2. Start the WebSocket relay
-
-```bash
-npx tsx server/websocket-server.ts
-```
-
-Default: `ws://0.0.0.0:1234` (reachable from other devices on your LAN).
-
-### 3. Start the web app
-
-In another terminal:
+### 2. Start the app
 
 ```bash
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
+Open [http://localhost:3000](http://localhost:3000). The WebSocket relay is served at `/_ws` on the same port — no second process, no extra config.
 
-### 4. Open a document to the fleet
+### 3. Open a document to the fleet
 
 1. Click **New Document** (or pick one from the shared list).
 2. **Share the document URL** with collaborators—other laptops on your LAN, phones on Wi‑Fi, extra browser profiles, or multiple tabs on one machine.
@@ -125,20 +117,35 @@ Open [http://localhost:3000](http://localhost:3000).
 
 **Scale-out pattern:** one document ID → many replicas → single relay room → eventual consistency via CRDT merge. Add as many clients as you want; the architecture is **N-replica**, not pairwise.
 
+### Production
+
+```bash
+npm run build
+npm start            # NODE_ENV=production, honors $PORT
+```
+
+### Optional: standalone relay
+
+For advanced setups (e.g. running the sync relay on a separate host from the web app), start the standalone relay and point clients at it:
+
+```bash
+npx tsx server/websocket-server.ts          # ws://0.0.0.0:1234 by default
+NEXT_PUBLIC_WS_URL=ws://192.168.1.10:1234 npm run dev
+```
+
+Without `NEXT_PUBLIC_WS_URL`, clients use the merged relay at same-origin `/_ws` (the default above), and the standalone relay is not needed.
+
 ---
 
 ## Environment variables
 
+All optional — the default merged-server flow needs none.
+
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `WS_PORT` | `1234` | WebSocket relay port |
-| `NEXT_PUBLIC_WS_URL` | `ws://<hostname>:1234` | Client WebSocket URL (set if relay is not on localhost) |
-
-Example for a remote relay:
-
-```bash
-NEXT_PUBLIC_WS_URL=ws://192.168.1.10:1234 npm run dev
-```
+| `PORT` | `3000` | Port the merged Next + WebSocket server binds (set by most hosts automatically) |
+| `WS_PORT` | `1234` | Port for the **optional** standalone relay (`server/websocket-server.ts`) only |
+| `NEXT_PUBLIC_WS_URL` | _(unset → same-origin `/_ws`)_ | Override the client WebSocket URL; set only when using a standalone/remote relay |
 
 ---
 
@@ -181,11 +188,11 @@ NEXT_PUBLIC_WS_URL=ws://192.168.1.10:1234 npm run dev
 
 | Command | Purpose |
 |---------|---------|
-| `npm run dev` | Start Next.js in development |
+| `npm run dev` | Start the merged Next + WebSocket server (dev) on `:3000` |
 | `npm run build` | Production build |
-| `npm run start` | Run production Next.js server |
+| `npm start` | Run the merged server in production (honors `$PORT`) |
 | `npm run lint` | ESLint |
-| `npx tsx server/websocket-server.ts` | Start sync relay (required for cross-device sync) |
+| `npx tsx server/websocket-server.ts` | Start the **optional** standalone relay (only for split web/relay hosts) |
 
 ---
 

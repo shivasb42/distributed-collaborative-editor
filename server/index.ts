@@ -12,6 +12,8 @@ const app = next({ dev, hostname, port });
 const handle = app.getRequestHandler();
 
 app.prepare().then(() => {
+  const upgradeHandler = app.getUpgradeHandler();
+
   const server = createServer((req, res) => {
     const parsedUrl = parse(req.url || "/", true);
     handle(req, res, parsedUrl);
@@ -27,7 +29,8 @@ app.prepare().then(() => {
         wss.emit("connection", ws, req);
       });
     } else {
-      socket.destroy();
+      // Let Next handle its own upgrades (e.g. /_next/webpack-hmr in dev).
+      upgradeHandler(req, socket, head);
     }
   });
 

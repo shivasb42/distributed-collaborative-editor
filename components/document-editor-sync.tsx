@@ -391,7 +391,14 @@ export function DocumentEditorWithSync({ documentId }: DocumentEditorWithSyncPro
     );
   }
 
-  const totalConnected = connectedTabs + Math.max(0, connectedClients - 1);
+  // Count OTHER participants. When the WebSocket is connected the server sees
+  // every tab/device (each opens its own socket), so connectedClients - 1 is the
+  // authoritative count. connectedTabs is only a same-browser fallback for when
+  // the socket is down — adding both double-counts local tabs.
+  const otherParticipants =
+    wsStatus === "connected"
+      ? Math.max(0, connectedClients - 1)
+      : connectedTabs;
 
   const getSyncBadge = () => {
     if (simulatedOffline) {
@@ -469,10 +476,10 @@ export function DocumentEditorWithSync({ documentId }: DocumentEditorWithSyncPro
             
             <div className="hidden sm:block">{getSyncBadge()}</div>
 
-            {totalConnected > 0 && (
+            {otherParticipants > 0 && (
               <div className="hidden sm:flex items-center gap-1.5 px-2 py-1 bg-muted rounded text-xs text-muted-foreground">
                 <Users className="h-3 w-3" />
-                <span>{totalConnected + 1}</span>
+                <span>{otherParticipants + 1}</span>
               </div>
             )}
 
@@ -502,12 +509,12 @@ export function DocumentEditorWithSync({ documentId }: DocumentEditorWithSyncPro
       </header>
 
       {/* Sync Banner */}
-      {effectiveOnline && totalConnected > 0 && (
+      {effectiveOnline && otherParticipants > 0 && (
         <div className="bg-green-50 dark:bg-green-900/20 border-b border-green-200 dark:border-green-800">
           <div className="max-w-4xl mx-auto px-4 py-2 flex items-center justify-center gap-2 text-sm text-green-700 dark:text-green-400">
             <Circle className="h-2 w-2 bg-green-500 rounded-full animate-pulse" />
             <span>
-              Real-time sync with {totalConnected} {totalConnected === 1 ? "user" : "users"}
+              Real-time sync with {otherParticipants + 1} users
             </span>
           </div>
         </div>
@@ -576,7 +583,7 @@ export function DocumentEditorWithSync({ documentId }: DocumentEditorWithSyncPro
       <TestPanel
         documentId={documentId}
         isOnline={effectiveOnline}
-        connectedTabs={totalConnected}
+        connectedTabs={otherParticipants}
         unsyncedCount={unsyncedCount}
         syncStatus={syncStatus}
         onSimulateOffline={handleSimulateOffline}
